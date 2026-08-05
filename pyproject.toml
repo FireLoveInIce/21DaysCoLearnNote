@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=65.5"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "web3-arbitrage-colearn"
+version = "0.1.0"
+description = "A 21-day Web3 arbitrage co-learning project."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
