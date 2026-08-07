@@ -1,0 +1,23 @@
+{
+  "chain_id": 1,
+  "block_number": 25703592,
+  "factory": "0x1f98431c8ad98523631ae4a59f267346ea31f984",
+  "pool": "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640",
+  "token0": {
+    "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "symbol": "USDC",
+    "decimals": 6
+  },
+  "token1": {
+    "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    "symbol": "WETH",
+    "decimals": 18
+  },
+  "fee": 500,
+  "tick_spacing": 10,
+  "sqrt_price_x96": "1811746462547226100334955324321894",
+  "tick": 200759,
+  "liquidity": "19500829815584349473",
+  "price_token1_per_token0": "0.00052292051059933697955706757554054363915361036053050271083299308467341765178333904",
+  "price_token0_per_token1": "1912.3365401251253161685978447967122266801489068786983069654272584711090686917339"
+}
