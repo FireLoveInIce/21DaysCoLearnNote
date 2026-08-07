@@ -33,6 +33,9 @@ Pool 唯一身份 = sort(tokenA, tokenB) + fee
 
 Factory 使用 CREATE2 部署 Pool，salt 为 `keccak256(abi.encode(token0, token1, fee))`，因此外围合约可以确定性计算地址。`createPool()` 只部署；新池还需调用 `initialize(sqrtPriceX96)` 设置初始价格。
 
+> [!IMPORTANT]
+> **套利相关：Pool 发现与费率分层。** 同一币对的不同 fee Pool 是相互独立的市场，可能暂时出现价差；套利扫描不能只按 Token 对去重，必须以 `factory + token0 + token1 + fee` 标识 Pool。CREATE2 允许程序不发 RPC 就批量计算候选地址，再检查代码或流动性是否存在。
+
 ## 二、核心接口速查
 
 ### Factory
@@ -85,6 +88,9 @@ exactOutput({path, recipient, deadline, amountOut, amountInMaximum})
 - `sqrtPriceLimitX96`：单个 Pool 的价格运动边界。Router 接收 0 时会替换成协议极限。
 - Exact Input 多跳路径：`tokenA | feeAB | tokenB | feeBC | tokenC`；Exact Output 反向编码。
 
+> [!IMPORTANT]
+> **套利相关：Router 不是必经入口。** 套利合约可以直接调用 Pool 以减少通用 Router 的路径解析和中转开销，但必须自行实现 Callback、付款、方向判断、最小利润和截止条件。省下的 Gas 不会改变 Pool 给出的理论成交量。
+
 ### Quoter
 
 ```solidity
@@ -134,6 +140,12 @@ Swap 流程：
 
 V3 需要先完成逐 Tick 计算才能知道精确付款额。Callback 也使多跳、闪电组合和自定义结算可以在同一交易调用栈内完成。主要回调有 `uniswapV3MintCallback`、`uniswapV3SwapCallback` 和 `uniswapV3FlashCallback`。
 
+> [!IMPORTANT]
+> **套利相关：原子执行。** Callback 允许套利合约先取得一跳输出，再把它用于下一跳或偿还上一层欠款；只要最终余额检查、最低利润或还款条件不满足，整条调用链会回滚。这能降低预持有资金需求，但不能消除 Gas、MEV、竞争和外部协议风险。
+
+> [!WARNING]
+> **套利安全：** Callback 必须用规范 Factory、Token 和 fee 验证 `msg.sender` 对应真实 Pool，不能信任回调传入的地址，也不能用 `tx.origin` 鉴权。否则攻击者可能伪造回调，利用执行合约或用户对 Router 的 Token 授权盗取资产。
+
 ## 四、价格、Tick 与有效流动性
 
 ```text
@@ -158,6 +170,12 @@ tokenIn == token0 → zeroForOne = true  → sqrtPrice/Tick 下降
 tokenIn == token1 → zeroForOne = false → sqrtPrice/Tick 上升
 ```
 
+> [!IMPORTANT]
+> **套利相关：深度不是余额。** `slot0` 只给报价起点，`liquidity()` 只给当前区间深度；精确判断大额套利是否有利润，还必须沿交易方向读取 `tickBitmap`、初始化 Tick 和 `liquidityNet`。Pool 的 ERC-20 总余额包含不同区间仓位，不能当作 V2 reserves 套用 `x*y=k`。
+
+> [!WARNING]
+> **套利方向风险：** `zeroForOne` 由地址排序和输入 Token 决定，不由 Token 名称或“买入/卖出”口语决定。方向写反会同时导致错误的 Tick 扫描方向、价格变化方向和 `sqrtPriceLimitX96` 边界，交易通常回滚，也可能在宽松保护下得到非预期成交。
+
 ## 五、报价、执行与最少收到
 
 最终权威金额由 Pool 中的 `SwapMath.computeSwapStep` 和 `SqrtPriceMath` 逐 Tick 计算：
@@ -176,6 +194,12 @@ amountOutMinimum = floor(3500 × 0.995) = 3482.5 USDC
 ```
 
 优化方向：固定同一 `blockTag`，缓存 Token/fee/tickSpacing 等静态数据，批量读取状态，在本地同步 `slot0 + liquidity + tickBitmap + initialized ticks` 并实现整数逐 Tick 报价，只用 Quoter/`eth_call` 验证少量候选路径。不能只用当前现货价格乘输入量，因为会漏掉手续费、价格影响和跨 Tick 流动性变化。
+
+> [!IMPORTANT]
+> **套利相关：报价闭环。** 推荐采用“本地整数报价筛选 → Quoter/`eth_call` 复核 → 执行合约检查最低净利润”的三层结构。`amountOutMinimum` 保护最终输出，`sqrtPriceLimitX96` 限制单池价格运动，两者不能代替扣除各跳手续费、Gas、闪电贷费用和潜在 MEV 后的净利润检查。
+
+> [!WARNING]
+> **套利执行风险：** Quoter 返回的是某个区块状态下的模拟结果，不是上链时的成交承诺。候选 Pool 状态必须来自同一 `blockTag`；交易进入区块前的 Swap、流动性变化、抢跑或重组都可能使报价失效，因此执行合约必须在链上设置最小输出或最小利润并允许失败回滚。
 
 ## 六、今日实现与运行
 
@@ -223,6 +247,9 @@ python day03/src/v3_pool_snapshot.py --block 23000000 --pool 0x...
 - 精度：链上整数使用 `int`，价格使用 `Decimal`，不使用二进制 `float`。
 - 一致区块：先锁定区块号，之后所有 `eth_call` 使用相同 blockTag。
 - V3 余额：Pool Token 余额不是 V2 reserves，不能套用 `x*y=k` 直接报价。
+
+> [!IMPORTANT]
+> **套利相关：实时与缓存边界。** `token0/token1/fee/tickSpacing/decimals` 可缓存并定期核验；`slot0`、当前 `liquidity`、相关 Tick 和 Gas 成本属于机会判断的实时输入。混用不同区块的数据可能构造出链上从未同时存在过的虚假利润。
 
 ## 完成情况
 
