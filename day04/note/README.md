@@ -1,166 +1,427 @@
-# Day 04 学习计划：V3 Swap、报价验证与真实交易复现
-
-## 今日定位
-
-Day03 回答“Pool 当前是什么状态”，Day04 回答“输入一笔交易后，Pool 怎样计算输出并改变状态”。今天的核心不是背完 V3 数学库，而是建立套利程序最重要的验证闭环：
-
-> 链下发现候选机会后，能够使用 Quoter 和完整 `eth_call` 模拟验证结果，并能从真实交易中解释 Swap 的输入、输出和价格变化。
-
-建议投入 5—7 小时。完整、精确的离线逐 Tick 报价器通常需要更多时间，不应作为今天的硬性完成条件。
+# Day 04：Uniswap V3 Swap、报价验证与真实交易复现
 
 ## 今日目标
 
-- 理解单个 Tick 区间内计算与跨 Tick 执行的整体流程。
-- 理解 `zeroForOne`、Exact Input、Exact Output 和 `sqrtPriceLimitX96`。
-- 理解 SwapRouter → Pool → Callback 的调用链和安全边界。
-- 使用官方 Quoter 获取单池报价，并知道它与最终成交的差别。
-- 解码一笔真实 V3 Swap，建立“报价—模拟—成交”的验证思路。
-
-## 一、V3 Swap 的工程流程
-
-先掌握程序执行顺序，再阅读具体数学库：
+Day03 解决“Pool 当前是什么状态”，Day04 继续解决“输入一笔交易后，Pool 如何计算输出并改变状态”。今天的重点不是背诵全部数学库，而是建立套利程序需要的验证闭环：
 
 ```text
-读取当前 sqrtPrice、tick、liquidity
-  → 根据交易方向寻找下一个已初始化 Tick
-  → 计算到达目标价格或下一个 Tick 所需的输入
-  → 输入不足：在当前区间内结束
-  → 输入充足：穿越 Tick
-  → 按 liquidityNet 更新有效 liquidity
-  → 继续处理剩余输入
-  → 得到最终 amount0、amount1、sqrtPrice 和 tick
+固定区块读取状态
+  → 轻量筛选候选机会
+  → Quoter 精确报价
+  → 对最终执行 calldata 做 eth_call
+  → estimateGas 并计算净利润
+  → 链上 minProfit 再校验
+  → 发送或放弃
 ```
 
-必须说清楚：
+需要掌握：
 
-- `zeroForOne = true` 与 `false` 分别让价格向哪个方向移动。
-- Exact Input 固定输入、求最大输出；Exact Output 固定输出、求所需输入。
-- 每一步先处理手续费，再计算可用于推动价格的输入。
-- `sqrtPriceLimitX96` 是价格边界，不等同于 Router 的最终 `amountOutMinimum`。
-- 跨越初始化 Tick 时改变的是有效 `liquidity`，不是简单读取 Pool Token 余额。
+- 单个 Tick 区间内如何计算，以及 Swap 如何跨越初始化 Tick。
+- `zeroForOne`、Exact Input、Exact Output 和 `sqrtPriceLimitX96` 的含义。
+- Router → Pool → Callback 的调用链与 Callback 的安全边界。
+- 瞬时价格、Quoter 报价和完整执行模拟之间的区别。
+- 如何从交易、回执和 Pool 的 `Swap` 事件还原真实成交。
 
-## 二、Router、Pool 与 Callback
+## 一、Swap 的状态机
 
-以单池 Exact Input 为主线：
+`UniswapV3Pool.swap()` 先把当前 `slot0` 和有效流动性复制到内存中的 Swap 状态，然后循环处理剩余数量：
 
 ```text
-用户/执行合约
-  → SwapRouter.exactInputSingle
-  → Pool.swap
-  → Pool 逐 Tick 计算并发送输出 Token
-  → uniswapV3SwapCallback
-  → Callback 支付正数 Delta
-  → Pool 检查余额并完成 Swap
+读取 sqrtPriceX96、tick、liquidity
+  → 按方向从 tickBitmap 找下一候选 Tick
+  → 取“下一 Tick 价格”和“sqrtPriceLimitX96”中更近的目标价格
+  → SwapMath.computeSwapStep 计算本步 amountIn、amountOut、feeAmount
+  → 输入未耗尽且到达初始化 Tick：执行 Tick.cross
+  → 按 liquidityNet 更新当前有效 liquidity
+  → 继续处理剩余数量，直到数量耗尽或触及价格边界
+  → 写回 slot0、liquidity、手续费增长并结算 Token
 ```
 
-需要理解而不是照抄的安全点：
+循环的停止条件只有两个：`amountSpecifiedRemaining == 0`，或者当前价格到达 `sqrtPriceLimitX96`。一次 Swap 可以经过多个未初始化 Tick 和多个初始化 Tick；只有跨过初始化 Tick 才会改变当前区间的有效流动性。
 
-- Callback 必须验证 `msg.sender` 是可信 Factory 创建的真实 Pool。
-- 正数 Delta 表示 Callback 必须向 Pool 支付的 Token。
-- 直接调用 Pool 不能绕过手续费，也不能省略 Callback 付款。
-- 多跳套利执行合约可以用上一池的输出支付下一池，但最终仍需检查净利润。
+### 方向与数量符号
 
-## 三、三种报价层次
+Pool 的 Token 顺序由地址排序确定，方向不能根据 Symbol 或“买入/卖出”的口语猜测。
 
-| 层次 | 用途 | 优点 | 局限 |
+| 条件 | 输入 / 输出 | 价格移动 | Tick 移动 |
 | --- | --- | --- | --- |
-| 自己读取 `slot0` 看瞬时价格 | 快速筛选候选池 | 成本低、速度快 | 不能代表指定数量的可成交价格 |
-| Quoter 报价 | 验证单池或路径输出 | 接近协议真实计算 | RPC 调用较重，状态仍可能变化 |
-| 对套利执行合约做完整 `eth_call` | 发送前最终验证 | 包含所有 DEX、Callback、费用和利润检查 | 只对模拟使用的状态有效 |
+| `zeroForOne = true` | token0 → token1 | `sqrtPriceX96` 下降 | 下降 |
+| `zeroForOne = false` | token1 → token0 | `sqrtPriceX96` 上升 | 上升 |
 
-套利程序的合理流程是：
+`amountSpecified` 的符号决定 Swap 类型：
+
+| `amountSpecified` | 类型 | 已知量 | 求解量 |
+| --- | --- | --- | --- |
+| `> 0` | Exact Input | 输入上限 | 最大输出 |
+| `< 0` | Exact Output | 目标输出 | 所需输入 |
+
+Pool 返回值和 `Swap` 事件中的 `amount0`、`amount1` 都以 **Pool 为观察主体**：
+
+- 正数：Pool 收到该 Token，也是交易者的输入。
+- 负数：Pool 发出该 Token，也是交易者的输出。
+- 正常的两 Token Swap 中，二者应一正一负。
+
+因此方向也可以由事件验证：
 
 ```text
-轻量价格筛选
-  → 精确路径报价
-  → 构造最终套利 calldata
-  → 完整 eth_call / estimateGas
-  → 满足 minProfit 后才考虑发送
+amount0 > 0 且 amount1 < 0 → token0 输入，token1 输出，zeroForOne = true
+amount0 < 0 且 amount1 > 0 → token1 输入，token0 输出，zeroForOne = false
 ```
 
-Quoter 成功不代表完整套利一定成功；完整模拟成功也不保证交易打包时状态没有变化，所以链上执行合约仍必须保留 `minProfit` 检查。
+展示给用户时再分别除以 Token 的 `10 ** decimals`，不能直接把事件中的原始整数当成人类可读数量。
 
-## 四、今日动手任务
+### 手续费与单步计算
 
-### 必做任务 A：调用 Quoter
+Exact Input 的每一步先从可用输入中计提手续费，剩余部分才推动价格。核心关系可以概括为：
 
-对 Day03 选择的 Pool：
+```text
+本步总输入 = amountIn + feeAmount
+本步输出   = amountOut
+```
 
-- [ ] 使用一个不会影响市场的小额 `amountIn` 获取单池报价。
-- [ ] 分别记录 Token0 → Token1 和 Token1 → Token0。
-- [ ] 记录调用区块、输入数量、输出数量和 Gas Estimate。
-- [ ] 改变输入规模，观察平均成交价格和价格影响的变化。
-- [ ] 比较相同币对不同费率 Pool 的净输出，而不是只比较瞬时价格。
+当剩余输入足以到达本步目标价格时，价格移动到目标；否则根据剩余输入求出区间内的新价格并结束。最终输出不是“输入数量 × 当前现货价格”，因为它同时受手续费、当前有效流动性、价格影响和沿途 Tick 流动性变化影响。
 
-至少测试三个输入规模，并回答：费率更低的 Pool 是否一定输出更多？如果不是，原因是什么？
+### 跨 Tick 后为何改变流动性
 
-### 必做任务 B：解码真实 Swap
+每个初始化 Tick 保存 `liquidityNet`。从低 Tick 向高 Tick 穿越时，将它加到当前有效流动性；反方向穿越时先取反再相加：
 
-选择一笔 Ethereum 主网 V3 Swap：
+```text
+向右（Tick 上升）跨越：L_next = L_current + liquidityNet
+向左（Tick 下降）跨越：L_next = L_current - liquidityNet
+```
 
-- [ ] 定位 Router 调用和目标 Pool。
-- [ ] 解码交易 calldata 中的 Token、fee、recipient、amount 和限制参数。
-- [ ] 解码 Pool 的 `Swap` 事件。
-- [ ] 判断交易方向以及哪个 Token 是输入、哪个是输出。
-- [ ] 记录事件后的 `sqrtPriceX96`、liquidity 和 tick。
-- [ ] 用交易回执的 Gas Used 计算实际执行成本。
+原因是 LP 仓位只在 `[tickLower, tickUpper)` 内活跃。跨过仓位边界时，一部分流动性进入或离开当前价格区间。Pool 的 Token 总余额包含各个价格区间对应的资产，不能当作 V2 reserves 套用 `x * y = k`。
 
-真实交易记录模板：
+## 二、价格限制与滑点保护
+
+`sqrtPriceLimitX96` 是 **单个 Pool 内的价格边界**：
+
+- `zeroForOne = true` 时必须低于当前价格且高于协议最小值。
+- `zeroForOne = false` 时必须高于当前价格且低于协议最大值。
+- Router 收到 0 时，会替换成对应方向的协议极限附近值。
+
+它与 Router 的数量保护不是同一件事：
+
+| 参数 | 保护对象 | 典型用途 |
+| --- | --- | --- |
+| `sqrtPriceLimitX96` | 单池价格不能越过某边界 | 限制单池价格移动 |
+| `amountOutMinimum` | Exact Input 最终至少收到多少 | 防止输出过少 |
+| `amountInMaximum` | Exact Output 最多支付多少 | 防止输入过多 |
+| `minProfit` | 整条套利路径的最低净收益 | 扣除各跳费用和执行成本后仍盈利 |
+
+套利执行不能只设置宽松的 `sqrtPriceLimitX96`，也不能只相信链下报价；最终执行合约必须检查 `minProfit`，条件不满足时让整笔交易原子回滚。
+
+## 三、Router、Pool 与 Callback
+
+以单池 Exact Input 为例：
+
+```text
+用户或套利合约
+  → SwapRouter.exactInputSingle(params)
+  → UniswapV3Pool.swap(...)
+  → Pool 逐步计算 amount0Delta / amount1Delta
+  → Pool 先转出输出 Token
+  → 调用发起方的 uniswapV3SwapCallback(...)
+  → Callback 向 Pool 支付正数 Delta 对应的 Token
+  → Pool 比较付款前后余额，不足则整笔交易 revert
+```
+
+Callback 是普通的同步外部调用，不是 EVM 特殊语法。直接调用 Pool 可以省去通用 Router 的路径处理成本，但不能绕过 Pool 手续费，也不能省略 Callback 付款。
+
+### Callback 的安全边界
+
+Callback 中不能相信调用参数携带的 Pool 地址，也不能用 `tx.origin` 鉴权。推荐的验证过程是：
+
+1. 从可信上下文解码 `tokenA`、`tokenB` 和 `fee`。
+2. 对 Token 地址排序。
+3. 用规范 Factory 的 `getPool(token0, token1, fee)` 查询，或使用 Factory、salt 和 init code hash 确定性计算 Pool 地址。
+4. 要求计算结果等于 `msg.sender`。
+5. 只支付正数 Delta 对应的 Token，付款人和最大付款额也应受执行上下文约束。
+
+否则攻击者可以直接调用 Callback，伪造 Delta，并尝试消耗执行合约自身余额或用户给 Router 的授权。
+
+多跳时，上一池输出可以在同一调用栈中用于下一池付款；Exact Output 多跳还可能形成嵌套 Callback。无论路径如何组织，最终都必须满足每个 Pool 的余额检查以及执行合约的净利润检查。
+
+## 四、三层报价验证
+
+### 第一层：状态快照与轻量筛选
+
+读取同一 `blockTag` 下的 `slot0`、`liquidity` 和必要的 Tick 数据，用于快速排除明显无利润的候选路径。`slot0` 只代表边际价格，不能代表指定数量的平均成交价格。
+
+适合批量扫描，不适合作为发送交易的最终依据。
+
+### 第二层：Quoter 精确报价
+
+Quoter 使用真实 Pool Swap 路径做模拟，再从 revert data 中取出结果。它比只看 `slot0` 更接近真实成交，但仍有以下边界：
+
+- 报价只对调用使用的区块状态有效。
+- Quoter 调用较重，不适合在链上作为常规报价器。
+- 单池报价成功不代表多 DEX 套利的 Callback、授权和利润检查都能成功。
+- QuoterV2 还返回估算 Gas、Swap 后价格、跨越的初始化 Tick 数等诊断信息；这些不是最终交易回执。
+
+对同一 Pool 至少比较三个输入规模，并记录：
+
+| blockTag | 方向 | amountIn | amountOut | 平均成交价 | Gas Estimate | 价格影响 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 待实测 | USDC → WETH | 小额 |  |  |  |  |
+| 待实测 | USDC → WETH | 中额 |  |  |  |  |
+| 待实测 | USDC → WETH | 大额 |  |  |  |  |
+| 待实测 | WETH → USDC | 小额 |  |  |  |  |
+| 待实测 | WETH → USDC | 中额 |  |  |  |  |
+| 待实测 | WETH → USDC | 大额 |  |  |  |  |
+
+平均成交价必须用经 decimals 归一化后的实际输入和输出计算；价格影响应与 **Swap 前同一区块的边际价格** 比较。
+
+费率更低的 Pool 不一定输出更多。另一个 Pool 可能拥有更有利的起始价格、更高的当前有效流动性、更密集的沿途流动性，或者更少的跨 Tick 价格影响。比较相同币对的池时，必须以同一 `blockTag`、同一方向、同一输入量的净输出为准。
+
+### 第三层：模拟最终执行交易
+
+发送前应使用与真实交易相同的 `to`、`from`、`value` 和 `data` 对最终套利合约执行 `eth_call`，随后再 `estimateGas`。这一步应覆盖：
+
+- 所有 DEX 和所有跳数。
+- Token 授权、余额、Callback 付款与还款。
+- `amountOutMinimum` / `amountInMaximum`。
+- 闪电贷或闪电兑换费用。
+- 执行合约的 deadline、allowlist 和 `minProfit`。
+
+净利润至少按以下口径判断：
+
+```text
+netProfit
+  = finalAssetOut
+  - initialAssetIn
+  - protocolOrFlashFees
+  - estimatedGas × maxFeePerGas（折算为同一计价资产）
+  - safetyBuffer
+```
+
+`eth_call` 成功不保证打包时仍成功，因为 pending Swap、流动性变化、抢跑、区块重组和 base fee 变化都可能使模拟失效。
+
+## 五、真实 Swap 的解析方法
+
+### 需要收集的原始数据
+
+给定交易哈希，固定保存：
+
+1. 交易对象、发送者、`value`、input calldata 和 block number。
+2. 交易回执的 `status`、logs、`gasUsed`、`effectiveGasPrice`。
+3. Router 函数和参数；如果通过 Universal Router、聚合器或自定义合约进入，还要继续解析内部调用或 trace。
+4. 每个目标 Pool 的 `Swap` 事件。
+5. 交易前状态：优先读取 `blockNumber - 1`，更严谨时使用交易级 trace/state diff 获取同一区块内该交易执行前的状态。
+
+### 解码 `Swap` 事件
+
+事件定义为：
+
+```solidity
+event Swap(
+    address indexed sender,
+    address indexed recipient,
+    int256 amount0,
+    int256 amount1,
+    uint160 sqrtPriceX96,
+    uint128 liquidity,
+    int24 tick
+);
+```
+
+- 发出日志的合约地址就是 Pool 地址，不能只相信 Router calldata 中的路径。
+- `sender` 是调用 Pool 并接收 Callback 的地址，通常是 Router 或执行合约，不一定是交易发起 EOA。
+- `recipient` 是本跳输出接收者，多跳时可能是下一个 Pool、Router 或执行合约。
+- `sqrtPriceX96`、`liquidity`、`tick` 都是 **本次 Swap 结束后的值**。
+- 事件没有直接给出交易前 Tick 和价格；必须从交易前状态或 trace 获取。
+
+实际执行成本：
+
+```text
+gasCostWei = receipt.gasUsed × receipt.effectiveGasPrice
+```
+
+如果是 EIP-1559 交易，不能用 `maxFeePerGas` 代替实际的 `effectiveGasPrice`。若要计算用户的完整经济成本，还要区分 L1/L2 的额外数据费、私有交易支付和 Builder/Validator bribe。
+
+### 真实交易记录模板
 
 | 字段 | 结果 |
 | --- | --- |
-| Transaction Hash |  |
-| Block Number |  |
+| Transaction Hash | 待选择并固定 |
+| Block Number / Block Hash |  |
+| Transaction Status |  |
+| Entry Contract / Function |  |
 | Pool |  |
+| token0 / token1 / Fee Tier |  |
 | Token In / Amount In |  |
 | Token Out / Amount Out |  |
-| Fee Tier |  |
+| `zeroForOne` |  |
 | Tick Before / After |  |
 | `sqrtPriceX96` Before / After |  |
-| Gas Used |  |
+| Liquidity Before / After |  |
+| Gas Used / Effective Gas Price |  |
+| Actual Gas Cost |  |
+| 数据限制 | Archive / Trace 是否可用 |
 
-如果 RPC 支持历史状态或 Trace，可读取交易前一个状态进行复现；如果当前 RPC 不支持 Archive/Trace，则明确记录限制，不要用最新区块报价冒充历史交易前报价。
+如果 RPC 不支持 Archive 或 Trace，应明确把交易前状态标为不可用；不能用最新区块的 Quoter 结果冒充历史交易前报价。
 
-### 必做任务 C：整理最小 ABI
+## 六、按用途拆分最小 ABI
 
-按用途拆分，不要把完整 ABI 全部复制进程序：
+程序只保留实际调用和解析需要的片段，避免复制整份 ABI。
 
-- [ ] 发现池：Factory `getPool`、Pool 创建事件。
-- [ ] 状态监控：`slot0`、`liquidity`、`ticks`、`tickBitmap`、`Swap`。
-- [ ] 报价验证：Quoter 单池报价接口。
-- [ ] 执行准备：SwapRouter 单池 Exact Input 接口。
-- [ ] Callback：`uniswapV3SwapCallback` 及真实 Pool 验证所需字段。
+### Pool 发现
 
-### 进阶任务：简化离线报价
+```solidity
+function getPool(address tokenA, address tokenB, uint24 fee)
+    external view returns (address pool);
 
-- [ ] 只实现“不跨初始化 Tick”的单区间报价。
-- [ ] 与官方 Quoter 对比误差。
-- [ ] 再尝试加入 Tick Bitmap 和跨 Tick 流动性变化。
+event PoolCreated(
+    address indexed token0,
+    address indexed token1,
+    uint24 indexed fee,
+    int24 tickSpacing,
+    address pool
+);
+```
 
-不建议让 AI 一次生成完整 V3 报价器后直接信任。每增加一个能力，都应与官方 Quoter、固定区块状态和边界测试交叉验证。
+### 状态监控与事件
 
-## 五、今日交付物
+```solidity
+function token0() external view returns (address);
+function token1() external view returns (address);
+function fee() external view returns (uint24);
+function tickSpacing() external view returns (int24);
+function liquidity() external view returns (uint128);
+function slot0() external view returns (
+    uint160 sqrtPriceX96,
+    int24 tick,
+    uint16 observationIndex,
+    uint16 observationCardinality,
+    uint16 observationCardinalityNext,
+    uint8 feeProtocol,
+    bool unlocked
+);
+function ticks(int24 tick) external view returns (
+    uint128 liquidityGross,
+    int128 liquidityNet,
+    uint256 feeGrowthOutside0X128,
+    uint256 feeGrowthOutside1X128,
+    int56 tickCumulativeOutside,
+    uint160 secondsPerLiquidityOutsideX128,
+    uint32 secondsOutside,
+    bool initialized
+);
+function tickBitmap(int16 wordPosition) external view returns (uint256);
 
-- [ ] 一份三个输入规模的 Quoter 报价记录。
-- [ ] 一笔真实 V3 Swap 的完整解析。
-- [ ] 监控、报价、执行、Callback 四类最小 ABI 清单。
-- [ ] 一张从发现候选机会到提交交易的验证流程图。
+event Swap(
+    address indexed sender,
+    address indexed recipient,
+    int256 amount0,
+    int256 amount1,
+    uint160 sqrtPriceX96,
+    uint128 liquidity,
+    int24 tick
+);
+```
 
-## 六、完成标准
+### QuoterV2 单池 Exact Input
 
-今天完成后，应当能够回答：
+```solidity
+struct QuoteExactInputSingleParams {
+    address tokenIn;
+    address tokenOut;
+    uint256 amountIn;
+    uint24 fee;
+    uint160 sqrtPriceLimitX96;
+}
 
-1. 为什么比较两个 Pool 的瞬时价格不能直接得出套利利润？
-2. 一笔 Swap 跨过初始化 Tick 后，有效流动性为什么会变化？
-3. Quoter 报价与完整套利合约模拟有什么区别？
-4. Callback 为什么必须验证真实 Pool？
-5. 如何从交易哈希确定实际输入、输出、方向和 Gas 成本？
+function quoteExactInputSingle(QuoteExactInputSingleParams memory params)
+    external returns (
+        uint256 amountOut,
+        uint160 sqrtPriceX96After,
+        uint32 initializedTicksCrossed,
+        uint256 gasEstimate
+    );
+```
 
-如果仍无法独立解析真实 Swap，建议增加半天完成交易复现，再进入 Day05。Day05 的 V4 目标可以相应缩减为架构和风险识别，不影响第一阶段核心成果。
+不同版本的 Quoter 参数布局和返回值不同，编码 calldata 前必须核对目标地址实际部署的 ABI，不能混用 Quoter 与 QuoterV2。
 
-## 官方资料
+### SwapRouter 单池 Exact Input
 
-- [Uniswap V3 Core](https://github.com/Uniswap/v3-core)
-- [Uniswap V3 Periphery](https://github.com/Uniswap/v3-periphery)
-- [Uniswap V3 Swap 示例](https://docs.uniswap.org/contracts/v3/guides/swaps/single-swaps)
+```solidity
+struct ExactInputSingleParams {
+    address tokenIn;
+    address tokenOut;
+    uint24 fee;
+    address recipient;
+    uint256 deadline;
+    uint256 amountIn;
+    uint256 amountOutMinimum;
+    uint160 sqrtPriceLimitX96;
+}
 
+function exactInputSingle(ExactInputSingleParams calldata params)
+    external payable returns (uint256 amountOut);
+```
+
+Router02、Universal Router 与旧版 `SwapRouter` 的入口和 tuple 布局可能不同。解析真实交易时先用 4-byte selector 确认目标函数，再按目标合约版本解码。
+
+### 直接调用 Pool 与 Callback
+
+```solidity
+function swap(
+    address recipient,
+    bool zeroForOne,
+    int256 amountSpecified,
+    uint160 sqrtPriceLimitX96,
+    bytes calldata data
+) external returns (int256 amount0, int256 amount1);
+
+function uniswapV3SwapCallback(
+    int256 amount0Delta,
+    int256 amount1Delta,
+    bytes calldata data
+) external;
+```
+
+## 七、离线报价器的合理边界
+
+第一版只实现“不跨初始化 Tick”的单区间报价器是合理的，但必须明确它的拒绝条件：当计算出的目标价格将越过下一初始化 Tick 时，返回“不支持”，而不是继续给出看似精确的错误结果。
+
+推荐迭代顺序：
+
+1. 整数实现单区间 Exact Input，覆盖两个方向。
+2. 固定 `blockTag` 与官方 Quoter 逐例比较。
+3. 加入 Exact Output、极小输入、极端 decimals 和向上取整测试。
+4. 加入 `tickBitmap` 搜索。
+5. 加入 `liquidityNet` 和跨 Tick 更新。
+6. 再处理多跳路径、Gas 与缓存优化。
+
+金额、Q64.96 价格和 Tick 数学必须使用整数或高精度十进制，不能使用二进制 `float`。每增加一种能力，都应使用固定区块状态、官方 Quoter 和边界测试交叉验证。
+
+## 八、完成标准与结论
+
+1. **为什么瞬时价格不能直接得出套利利润？** 交易本身会移动价格，还要扣除每个池的手续费、跨 Tick 深度变化、Gas、闪电贷费用和安全缓冲。
+2. **跨过初始化 Tick 后有效流动性为何变化？** 集中流动性仓位只在指定价格范围内活跃，穿越边界会让仓位进入或离开当前区间。
+3. **Quoter 与完整套利模拟有何区别？** Quoter 验证某个 V3 池或路径的协议报价；完整 `eth_call` 还验证其他 DEX、Callback、余额、授权、费用和 `minProfit`。
+4. **Callback 为何必须验证真实 Pool？** Callback 会付款；不验证 `msg.sender` 会让伪造调用者尝试盗取合约余额或滥用授权。
+5. **如何从交易哈希确定实际成交？** 解码入口 calldata 和 trace，用 Pool 日志地址确定池，由 `Swap.amount0/amount1` 的符号确定输入输出，再结合 decimals、交易前状态和回执计算价格变化与 Gas 成本。
+
+## 完成情况
+
+- [x] 梳理单区间计算、跨 Tick 与流动性更新流程。
+- [x] 梳理 `zeroForOne`、Exact Input / Output 和三类价格/数量保护。
+- [x] 梳理 Router → Pool → Callback 调用链与真实 Pool 校验。
+- [x] 区分状态筛选、Quoter 与完整 `eth_call` 三层验证。
+- [x] 整理发现、监控、报价、执行和 Callback 的最小 ABI。
+- [x] 整理真实 Swap 解码步骤、符号规则和 Gas 成本公式。
+- [ ] 在固定区块对 Day03 的 WETH/USDC 0.05% Pool 完成双向、三个输入规模的 Quoter 实测。
+- [ ] 固定一笔主网 V3 Swap，填写完整交易记录并与交易前状态复核。
+- [ ] 实现并测试不跨初始化 Tick 的离线报价器。
+
+未完成的三项依赖可复现的 RPC/Archive/Trace 数据或新增实现，当前文档不填造数据，也不把最新状态当作历史状态。
+
+## 官方源码与资料
+
+- [Uniswap V3 Pool.swap 源码](https://github.com/Uniswap/v3-core/blob/main/contracts/UniswapV3Pool.sol)
+- [SwapMath 源码](https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/SwapMath.sol)
+- [Pool 事件接口](https://github.com/Uniswap/v3-core/blob/main/contracts/interfaces/pool/IUniswapV3PoolEvents.sol)
+- [SwapRouter 源码](https://github.com/Uniswap/v3-periphery/blob/main/contracts/SwapRouter.sol)
+- [QuoterV2 接口](https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/IQuoterV2.sol)
+- [CallbackValidation 源码](https://github.com/Uniswap/v3-periphery/blob/main/contracts/libraries/CallbackValidation.sol)
