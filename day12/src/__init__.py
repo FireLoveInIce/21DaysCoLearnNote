@@ -1,2 +1,1 @@
-"""Python source package for day 12."""
-
+"""Day 12: resilient Ethereum JSON-RPC data collection examples."""
