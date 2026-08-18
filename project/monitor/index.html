@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="基于 LI.FI Quote 的本地同链往返机会监控面板"
+    />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src https://li.quest; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <title>LI.FI 机会监控</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOCAL QUOTE MONITOR</p>
+        <h1>LI.FI 机会监控</h1>
+      </div>
+      <div class="topbar-status" aria-live="polite">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="monitor-status">监控已停止</span>
+      </div>
+    </header>
+
+    <main id="main-content" class="page-shell">
+      <section class="notice" aria-label="使用说明">
+        <strong>只读模式</strong>
+        <span>本页面只请求报价，不连接钱包、不签名、不执行交易。</span>
+        <a
+          href="https://docs.li.fi/api-reference/introduction"
+          target="_blank"
+          rel="noreferrer"
+        >LI.FI API 文档</a>
+      </section>
+
+      <div class="dashboard-grid">
+        <aside class="panel controls-panel" aria-labelledby="config-title">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">SCAN SETTINGS</p>
+              <h2 id="config-title">扫描配置</h2>
+            </div>
+            <button id="reset-button" class="text-button" type="button">恢复默认</button>
+          </div>
+
+          <form id="monitor-form" novalidate>
+            <div class="field">
+              <label for="chain-select">链</label>
+              <select id="chain-select" name="chain"></select>
+            </div>
+
+            <div class="field">
+              <div class="label-row">
+                <label for="sender-address">报价地址</label>
+                <span>仅用于生成 Quote</span>
+              </div>
+              <input
+                id="sender-address"
+                name="senderAddress"
+                type="text"
+                inputmode="text"
+                spellcheck="false"
+                autocomplete="off"
+                aria-describedby="sender-help"
+              />
+              <p id="sender-help" class="field-help">
+                不要填写私钥。若该地址余额不足，请保持“快速报价”开启。
+              </p>
+            </div>
+
+            <div class="field two-column">
+              <div>
+                <label for="base-token-select">计价币</label>
+                <select id="base-token-select" name="baseToken"></select>
+              </div>
+              <div>
+                <label for="quote-token-select">中间币</label>
+                <select id="quote-token-select" name="quoteToken"></select>
+              </div>
+            </div>
+
+            <div class="token-state" id="token-state" aria-live="polite">
+              正在载入 Token 列表…
+            </div>
+
+            <div class="field two-column">
+              <div>
+                <label for="amount-input">测试金额</label>
+                <input
+                  id="amount-input"
+                  name="amount"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value="100"
+                  required
+                />
+              </div>
+              <div>
+                <label for="interval-input">轮询间隔（秒）</label>
+                <input
+                  id="interval-input"
+                  name="interval"
+                  type="number"
+                  min="15"
+                  step="1"
+                  value="240"
+                  required
+                />
+              </div>
+            </div>
+
+            <div class="field two-column">
+              <div>
+                <label for="slippage-input">滑点（bps）</label>
+                <input
+                  id="slippage-input"
+                  name="slippage"
+                  type="number"
+                  min="1"
+                  max="5000"
+                  step="1"
+                  value="50"
+                  required
+                />
+              </div>
+              <div>
+                <label for="threshold-input">机会阈值（bps）</label>
+                <input
+                  id="threshold-input"
+                  name="threshold"
+                  type="number"
+                  min="0"
+                  max="10000"
+                  step="1"
+                  value="20"
+                  required
+                />
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="order-select">路由偏好</label>
+              <select id="order-select" name="order">
+                <option value="CHEAPEST">最低成本</option>
+                <option value="FASTEST">最快速度</option>
+              </select>
+            </div>
+
+            <label class="checkbox-row" for="skip-simulation-input">
+              <input id="skip-simulation-input" type="checkbox" checked />
+              <span>
+                <strong>快速报价</strong>
+                <small>跳过余额模拟；Gas 估算可能不够精确</small>
+              </span>
+            </label>
+
+            <div class="form-actions">
+              <button id="scan-button" class="button primary" type="submit">
+                立即扫描
+              </button>
+              <button id="toggle-button" class="button secondary" type="button">
+                开始自动监控
+              </button>
+            </div>
+          </form>
+
+          <div class="quota-box">
+            <div class="label-row">
+              <strong>本地请求预算</strong>
+              <span id="quota-label">0 / 70</span>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <span id="quota-progress"></span>
+            </div>
+            <p>每轮扫描需要 2 次 Quote。无密钥公共额度较低，默认间隔为 240 秒。</p>
+          </div>
+        </aside>
+
+        <div class="content-stack">
+          <section class="metric-grid" aria-label="当前扫描结果">
+            <article class="metric-card primary-metric">
+              <div class="metric-label">
+                <span>预计净收益</span>
+                <span id="signal-badge" class="badge neutral">等待扫描</span>
+              </div>
+              <strong id="net-profit-value">—</strong>
+              <p id="net-profit-caption">使用 toAmountMin，并扣除可折算 Gas</p>
+            </article>
+
+            <article class="metric-card">
+              <span class="metric-label">净 ROI</span>
+              <strong id="roi-value">—</strong>
+              <p id="roi-caption">机会阈值 20 bps</p>
+            </article>
+
+            <article class="metric-card">
+              <span class="metric-label">最低返还</span>
+              <strong id="return-value">—</strong>
+              <p id="return-caption">正向和反向均采用保守到账</p>
+            </article>
+
+            <article class="metric-card">
+              <span class="metric-label">报价状态</span>
+              <strong id="freshness-value">—</strong>
+              <p id="freshness-caption">尚无成功报价</p>
+            </article>
+          </section>
+
+          <section class="panel" aria-labelledby="route-title">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">LATEST ROUND TRIP</p>
+                <h2 id="route-title">最新往返路线</h2>
+              </div>
+              <span id="last-scan-time" class="muted">尚未扫描</span>
+            </div>
+
+            <div class="route-flow" id="route-flow" aria-label="路线概览">
+              <div class="route-token">
+                <span>起点</span>
+                <strong id="route-start-token">—</strong>
+              </div>
+              <div class="route-arrow">→</div>
+              <div class="route-token middle">
+                <span>中间资产</span>
+                <strong id="route-middle-token">—</strong>
+              </div>
+              <div class="route-arrow">→</div>
+              <div class="route-token">
+                <span>返还</span>
+                <strong id="route-end-token">—</strong>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>步骤</th>
+                    <th>Provider</th>
+                    <th>投入</th>
+                    <th>最低到账</th>
+                    <th>费用</th>
+                    <th>Gas</th>
+                    <th>预计耗时</th>
+                  </tr>
+                </thead>
+                <tbody id="route-table-body">
+                  <tr class="empty-row">
+                    <td colspan="7">完成一次扫描后显示路线明细</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div id="warning-box" class="warning-box hidden" role="alert"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="history-title">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">LOCAL HISTORY</p>
+                <h2 id="history-title">扫描历史</h2>
+              </div>
+              <button id="clear-history-button" class="text-button" type="button">
+                清空历史
+              </button>
+            </div>
+
+            <div class="chart-shell">
+              <canvas
+                id="roi-chart"
+                height="180"
+                role="img"
+                aria-label="最近扫描净 ROI 走势"
+              ></canvas>
+              <p id="chart-empty" class="chart-empty">完成两次扫描后显示 ROI 走势</p>
+            </div>
+
+            <div class="table-wrap history-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>链 / 交易对</th>
+                    <th>投入</th>
+                    <th>最终最低返还</th>
+                    <th>净收益</th>
+                    <th>ROI</th>
+                    <th>判断</th>
+                  </tr>
+                </thead>
+                <tbody id="history-table-body">
+                  <tr class="empty-row">
+                    <td colspan="7">历史记录只保存在当前浏览器中</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel activity-panel" aria-labelledby="activity-title">
+            <div class="panel-heading compact">
+              <h2 id="activity-title">活动记录</h2>
+              <button id="clear-log-button" class="text-button" type="button">清空</button>
+            </div>
+            <ol id="activity-list" class="activity-list" aria-live="polite">
+              <li>
+                <time>—</time>
+                <span>面板已就绪，请检查配置后开始扫描。</span>
+              </li>
+            </ol>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <span>仅供研究与学习，不构成交易建议。</span>
+      <span>数据源：LI.FI Public API</span>
+    </footer>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
