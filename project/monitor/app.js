@@ -4,6 +4,7 @@ const STORAGE_KEYS = {
   history: "lifi-monitor.history.v1",
   quoteCalls: "lifi-monitor.quote-calls.v1",
   tokenCache: "lifi-monitor.token-cache.v1",
+  customTokens: "lifi-monitor.custom-tokens.v1",
 };
 
 const REQUEST_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -86,7 +87,15 @@ const elements = {
   sender: byId("sender-address"),
   baseToken: byId("base-token-select"),
   quoteToken: byId("quote-token-select"),
+  baseTokenAddress: byId("base-token-address"),
+  quoteTokenAddress: byId("quote-token-address"),
   tokenState: byId("token-state"),
+  customTokenAddress: byId("custom-token-address"),
+  customTokenSymbol: byId("custom-token-symbol"),
+  customTokenDecimals: byId("custom-token-decimals"),
+  customTokenName: byId("custom-token-name"),
+  addCustomTokenButton: byId("add-custom-token-button"),
+  customTokenMessage: byId("custom-token-message"),
   amount: byId("amount-input"),
   interval: byId("interval-input"),
   slippage: byId("slippage-input"),
@@ -179,6 +188,7 @@ function bindEvents() {
     const preferredBase = chain?.tokens[0]?.address;
     const preferredQuote = chain?.tokens[1]?.address;
     await loadTokens(chainId, preferredBase, preferredQuote);
+    clearCustomTokenForm();
     persistSettings();
     addLog(`已切换到 ${chain?.name ?? chainId}，Token 列表已更新。`, "info");
   });
@@ -196,12 +206,15 @@ function bindEvents() {
   ]) {
     input.addEventListener("change", () => {
       persistSettings();
+      if (input === elements.baseToken || input === elements.quoteToken) updateTokenDetails();
       updateThresholdCaption();
       if (state.monitoring && input === elements.interval) {
         scheduleNextScan();
       }
     });
   }
+
+  elements.addCustomTokenButton.addEventListener("click", addCustomIntermediateToken);
 
   elements.resetButton.addEventListener("click", async () => {
     stopMonitoring();
@@ -277,7 +290,8 @@ async function loadTokens(chainId, preferredBase, preferredQuote) {
   elements.quoteToken.disabled = true;
 
   const cached = readTokenCache(chainId);
-  const fallback = mergeTokens(chain.tokens, cached?.tokens ?? []);
+  const customTokens = readCustomTokens(chainId);
+  const fallback = mergeTokens(chain.tokens, cached?.tokens ?? [], customTokens);
   populateTokenSelects(fallback, preferredBase, preferredQuote);
 
   try {
@@ -290,7 +304,7 @@ async function loadTokens(chainId, preferredBase, preferredQuote) {
 
     const currentBase = elements.baseToken.value || preferredBase;
     const currentQuote = elements.quoteToken.value || preferredQuote;
-    const merged = mergeTokens(chain.tokens, remoteTokens);
+    const merged = mergeTokens(chain.tokens, remoteTokens, customTokens);
     writeTokenCache(chainId, merged);
     populateTokenSelects(merged, currentBase, currentQuote);
     elements.tokenState.textContent = `已载入 ${merged.length} 个 Token；常用资产优先显示。`;
@@ -351,6 +365,7 @@ function populateTokenSelects(tokens, preferredBase, preferredQuote) {
   state.tokens = tokens;
   fillTokenSelect(elements.baseToken, tokens, preferredBase, tokens[0]?.address);
   fillTokenSelect(elements.quoteToken, tokens, preferredQuote, tokens[1]?.address || tokens[0]?.address);
+  updateTokenDetails();
 }
 
 function fillTokenSelect(select, tokens, preferred, fallback) {
@@ -361,7 +376,8 @@ function fillTokenSelect(select, tokens, preferred, fallback) {
   for (const item of tokens) {
     const option = document.createElement("option");
     option.value = item.address;
-    option.textContent = `${item.symbol} · ${item.name}`;
+    option.textContent = `${item.symbol} · ${item.name} · ${item.address}`;
+    option.title = `${item.symbol} | ${item.address}`;
     fragment.append(option);
   }
   select.replaceChildren(fragment);
@@ -369,6 +385,54 @@ function fillTokenSelect(select, tokens, preferred, fallback) {
   const preferredToken = tokens.find((item) => item.address.toLowerCase() === preferredKey);
   const fallbackToken = tokens.find((item) => item.address.toLowerCase() === fallbackKey);
   select.value = preferredToken?.address || fallbackToken?.address || tokens[0]?.address || "";
+}
+
+function updateTokenDetails() {
+  const baseToken = getSelectedToken(elements.baseToken.value);
+  const quoteToken = getSelectedToken(elements.quoteToken.value);
+  elements.baseTokenAddress.textContent = baseToken?.address || "—";
+  elements.quoteTokenAddress.textContent = quoteToken?.address || "—";
+}
+
+function addCustomIntermediateToken() {
+  elements.customTokenMessage.classList.remove("error");
+
+  try {
+    const chainId = Number(elements.chain.value);
+    const address = elements.customTokenAddress.value.trim();
+    const symbol = elements.customTokenSymbol.value.trim();
+    const decimals = Number(elements.customTokenDecimals.value);
+    const name = elements.customTokenName.value.trim() || `${symbol}（自定义）`;
+
+    if (!getChain(chainId)) throw new Error("请先选择支持的链");
+    if (!ADDRESS_PATTERN.test(address)) throw new Error("请输入有效的 EVM Token 合约地址");
+    if (!symbol || /[\u0000-\u001f]/.test(symbol)) throw new Error("请填写 Token Ticker / Symbol");
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+      throw new Error("Decimals 必须是 0 到 36 之间的整数");
+    }
+
+    const customToken = token(address, symbol.slice(0, 24), name.slice(0, 80), decimals);
+    writeCustomToken(chainId, customToken);
+    const currentBase = elements.baseToken.value;
+    const merged = mergeTokens(state.tokens, [customToken]);
+    populateTokenSelects(merged, currentBase, customToken.address);
+    persistSettings();
+
+    elements.customTokenMessage.textContent = `已添加 ${customToken.symbol}，并选为当前中间币。`;
+    addLog(`已添加自定义中间币 ${customToken.symbol}（${customToken.address}）。`, "success");
+  } catch (error) {
+    elements.customTokenMessage.classList.add("error");
+    elements.customTokenMessage.textContent = friendlyError(error);
+  }
+}
+
+function clearCustomTokenForm() {
+  elements.customTokenAddress.value = "";
+  elements.customTokenSymbol.value = "";
+  elements.customTokenDecimals.value = "18";
+  elements.customTokenName.value = "";
+  elements.customTokenMessage.textContent = "";
+  elements.customTokenMessage.classList.remove("error");
 }
 
 async function startMonitoring() {
@@ -1149,4 +1213,27 @@ function writeTokenCache(chainId, tokens) {
   const cache = readStoredObject(STORAGE_KEYS.tokenCache);
   cache[String(chainId)] = { timestamp: Date.now(), tokens };
   writeStorage(STORAGE_KEYS.tokenCache, cache);
+}
+
+function readCustomTokens(chainId) {
+  const stored = readStoredObject(STORAGE_KEYS.customTokens);
+  const items = stored[String(chainId)];
+  if (!Array.isArray(items)) return [];
+
+  return items.filter(
+    (item) =>
+      item &&
+      ADDRESS_PATTERN.test(item.address || "") &&
+      item.symbol &&
+      Number.isInteger(Number(item.decimals)) &&
+      Number(item.decimals) >= 0 &&
+      Number(item.decimals) <= 36,
+  );
+}
+
+function writeCustomToken(chainId, customToken) {
+  const stored = readStoredObject(STORAGE_KEYS.customTokens);
+  const current = Array.isArray(stored[String(chainId)]) ? stored[String(chainId)] : [];
+  stored[String(chainId)] = mergeTokens(current, [customToken]).slice(0, 50);
+  writeStorage(STORAGE_KEYS.customTokens, stored);
 }

@@ -85,9 +85,63 @@
               </div>
             </div>
 
+            <div class="token-contract-grid" aria-live="polite">
+              <div class="token-contract-card">
+                <span>计价币合约</span>
+                <code id="base-token-address">—</code>
+              </div>
+              <div class="token-contract-card">
+                <span>中间币合约</span>
+                <code id="quote-token-address">—</code>
+              </div>
+            </div>
+
             <div class="token-state" id="token-state" aria-live="polite">
               正在载入 Token 列表…
             </div>
+
+            <details class="custom-token-panel">
+              <summary>手动添加中间币</summary>
+              <p class="field-help">
+                Token 不在列表时，可按当前链填写合约信息。请从区块浏览器核对地址和 decimals。
+              </p>
+              <div class="field">
+                <label for="custom-token-address">中间币合约地址</label>
+                <input
+                  id="custom-token-address"
+                  type="text"
+                  inputmode="text"
+                  spellcheck="false"
+                  autocomplete="off"
+                  placeholder="0x…"
+                />
+              </div>
+              <div class="field custom-token-meta">
+                <div>
+                  <label for="custom-token-symbol">Ticker / Symbol</label>
+                  <input id="custom-token-symbol" type="text" maxlength="24" placeholder="TOKEN" />
+                </div>
+                <div>
+                  <label for="custom-token-decimals">Decimals</label>
+                  <input
+                    id="custom-token-decimals"
+                    type="number"
+                    min="0"
+                    max="36"
+                    step="1"
+                    value="18"
+                  />
+                </div>
+              </div>
+              <div class="field">
+                <label for="custom-token-name">名称（可选）</label>
+                <input id="custom-token-name" type="text" maxlength="80" placeholder="Custom Token" />
+              </div>
+              <button id="add-custom-token-button" class="button secondary full-width" type="button">
+                添加并选为中间币
+              </button>
+              <p id="custom-token-message" class="field-help" aria-live="polite"></p>
+            </details>
 
             <div class="field two-column">
               <div>

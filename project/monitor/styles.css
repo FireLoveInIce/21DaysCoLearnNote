@@ -325,6 +325,82 @@ select:disabled {
   color: var(--warning);
 }
 
+.token-contract-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: -5px 0 14px;
+}
+
+.token-contract-card {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.token-contract-card span,
+.token-contract-card code {
+  display: block;
+}
+
+.token-contract-card span {
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.token-contract-card code {
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.custom-token-panel {
+  margin: 0 0 16px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-muted);
+}
+
+.custom-token-panel summary {
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.custom-token-panel[open] summary {
+  margin-bottom: 10px;
+}
+
+.custom-token-panel .field {
+  margin-top: 12px;
+  margin-bottom: 0;
+}
+
+.custom-token-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 10px;
+}
+
+.full-width {
+  width: 100%;
+  margin-top: 12px;
+}
+
+#custom-token-message:not(:empty) {
+  margin-top: 9px;
+}
+
+#custom-token-message.error {
+  color: var(--danger);
+}
+
 .checkbox-row {
   display: flex;
   align-items: flex-start;
@@ -767,8 +843,13 @@ footer {
 
   .metric-grid,
   .two-column,
+  .token-contract-grid,
   .form-actions {
     grid-template-columns: 1fr;
+  }
+
+  .custom-token-meta {
+    grid-template-columns: minmax(0, 1fr) 82px;
   }
 
   .route-flow {
