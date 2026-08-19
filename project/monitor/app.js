@@ -3,7 +3,6 @@ const STORAGE_KEYS = {
   settings: "lifi-monitor.settings.v1",
   history: "lifi-monitor.history.v1",
   quoteCalls: "lifi-monitor.quote-calls.v1",
-  tokenCache: "lifi-monitor.token-cache.v1",
   customTokens: "lifi-monitor.custom-tokens.v1",
 };
 
@@ -13,7 +12,7 @@ const MAX_HISTORY = 80;
 const MAX_LOGS = 24;
 const DEFAULT_SENDER = "0x552008c0f6870c2f77e5cC1d2eb9bdff03e30Ea0";
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
-const FEATURED_SYMBOLS = ["USDC", "USDT", "DAI", "WETH", "ETH", "WBTC", "CBBTC"];
+const NATIVE_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 const CHAINS = [
   {
@@ -21,8 +20,10 @@ const CHAINS = [
     name: "Base",
     tokens: [
       token("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "USDC", "USD Coin", 6),
-      token("0x4200000000000000000000000000000000000006", "WETH", "Wrapped Ether", 18),
+      token("0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", "USDT", "Tether USD", 6),
       token("0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", "DAI", "Dai Stablecoin", 18),
+      token(NATIVE_TOKEN_ADDRESS, "ETH", "Ether", 18),
+      token("0x4200000000000000000000000000000000000006", "WETH", "Wrapped Ether", 18),
       token("0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf", "cbBTC", "Coinbase Wrapped BTC", 8),
     ],
   },
@@ -31,9 +32,11 @@ const CHAINS = [
     name: "Arbitrum",
     tokens: [
       token("0xaf88d065e77c8cC2239327C5EDb3A432268e5831", "USDC", "USD Coin", 6),
-      token("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", "WETH", "Wrapped Ether", 18),
       token("0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", "USDT", "Tether USD", 6),
       token("0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", "DAI", "Dai Stablecoin", 18),
+      token(NATIVE_TOKEN_ADDRESS, "ETH", "Ether", 18),
+      token("0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", "WETH", "Wrapped Ether", 18),
+      token("0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f", "WBTC", "Wrapped BTC", 8),
     ],
   },
   {
@@ -41,9 +44,11 @@ const CHAINS = [
     name: "Optimism",
     tokens: [
       token("0x0b2c639c533813f4aa9d7837caf62653d097ff85", "USDC", "USD Coin", 6),
-      token("0x4200000000000000000000000000000000000006", "WETH", "Wrapped Ether", 18),
       token("0x94b008aA00579c1307B0EF2c499aD98a8ce58e58", "USDT", "Tether USD", 6),
       token("0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", "DAI", "Dai Stablecoin", 18),
+      token(NATIVE_TOKEN_ADDRESS, "ETH", "Ether", 18),
+      token("0x4200000000000000000000000000000000000006", "WETH", "Wrapped Ether", 18),
+      token("0x68f180fcCe6836688e9084f035309E29Bf0A2095", "WBTC", "Wrapped BTC", 8),
     ],
   },
   {
@@ -51,9 +56,11 @@ const CHAINS = [
     name: "Ethereum",
     tokens: [
       token("0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "USDC", "USD Coin", 6),
-      token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "WETH", "Wrapped Ether", 18),
       token("0xdAC17F958D2ee523a2206206994597C13D831ec7", "USDT", "Tether USD", 6),
       token("0x6B175474E89094C44Da98b954EedeAC495271d0F", "DAI", "Dai Stablecoin", 18),
+      token(NATIVE_TOKEN_ADDRESS, "ETH", "Ether", 18),
+      token("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "WETH", "Wrapped Ether", 18),
+      token("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", "WBTC", "Wrapped BTC", 8),
     ],
   },
   {
@@ -61,9 +68,23 @@ const CHAINS = [
     name: "Polygon",
     tokens: [
       token("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", "USDC", "USD Coin", 6),
-      token("0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619", "WETH", "Wrapped Ether", 18),
-      token("0xc2132D05D31c914a87C6611C10748AaCBb58e8F", "USDT", "Tether USD", 6),
+      token("0xc2132D05D31c914a87C6611C10748AEb04B58e8F", "USDT", "Tether USD", 6),
       token("0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063", "DAI", "Dai Stablecoin", 18),
+      token(NATIVE_TOKEN_ADDRESS, "POL", "POL", 18),
+      token("0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619", "WETH", "Wrapped Ether", 18),
+      token("0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6", "WBTC", "Wrapped BTC", 8),
+    ],
+  },
+  {
+    id: 56,
+    name: "BSC",
+    tokens: [
+      token("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", "USDC", "USD Coin", 18),
+      token("0x55d398326f99059fF775485246999027B3197955", "USDT", "Tether USD", 18),
+      token("0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3", "DAI", "DAI Stablecoin", 18),
+      token(NATIVE_TOKEN_ADDRESS, "BNB", "BNB", 18),
+      token("0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", "WBNB", "Wrapped BNB", 18),
+      token("0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c", "BTCB", "Binance Bitcoin", 18),
     ],
   },
 ];
@@ -72,7 +93,7 @@ const DEFAULT_SETTINGS = {
   chainId: 8453,
   senderAddress: DEFAULT_SENDER,
   baseToken: CHAINS[0].tokens[0].address,
-  quoteToken: CHAINS[0].tokens[1].address,
+  quoteToken: "",
   amount: "100",
   interval: 240,
   slippageBps: 50,
@@ -134,6 +155,7 @@ const elements = {
 
 const state = {
   tokens: [],
+  quoteTokens: [],
   history: readStoredArray(STORAGE_KEYS.history).slice(0, MAX_HISTORY),
   quoteCalls: readStoredArray(STORAGE_KEYS.quoteCalls),
   logs: [],
@@ -141,12 +163,12 @@ const state = {
   monitoring: false,
   monitorTimer: null,
   lastScanAt: null,
-  activeTokenRequest: 0,
 };
 
 initialize();
 
 async function initialize() {
+  removeStorage("lifi-monitor.token-cache.v1");
   populateChains();
   const settings = { ...DEFAULT_SETTINGS, ...readStoredObject(STORAGE_KEYS.settings) };
   applySettings(settings);
@@ -186,7 +208,7 @@ function bindEvents() {
     const chainId = Number(elements.chain.value);
     const chain = getChain(chainId);
     const preferredBase = chain?.tokens[0]?.address;
-    const preferredQuote = chain?.tokens[1]?.address;
+    const preferredQuote = "";
     await loadTokens(chainId, preferredBase, preferredQuote);
     clearCustomTokenForm();
     persistSettings();
@@ -280,62 +302,16 @@ function applySettings(settings) {
 }
 
 async function loadTokens(chainId, preferredBase, preferredQuote) {
-  const requestId = ++state.activeTokenRequest;
   const chain = getChain(chainId);
   if (!chain) return;
 
   elements.tokenState.classList.remove("error");
-  elements.tokenState.textContent = "正在载入 LI.FI Token 列表…";
-  elements.baseToken.disabled = true;
-  elements.quoteToken.disabled = true;
-
-  const cached = readTokenCache(chainId);
   const customTokens = readCustomTokens(chainId);
-  const fallback = mergeTokens(chain.tokens, cached?.tokens ?? [], customTokens);
-  populateTokenSelects(fallback, preferredBase, preferredQuote);
-
-  try {
-    const response = await fetchWithTimeout(`${API_BASE}/tokens?chains=${chainId}`, 18_000);
-    if (!response.ok) throw await apiError(response, "Token 列表请求失败");
-    const payload = await response.json();
-    const remoteTokens = extractTokens(payload, chainId);
-    if (!remoteTokens.length) throw new Error("LI.FI 未返回可用 Token");
-    if (requestId !== state.activeTokenRequest) return;
-
-    const currentBase = elements.baseToken.value || preferredBase;
-    const currentQuote = elements.quoteToken.value || preferredQuote;
-    const merged = mergeTokens(chain.tokens, remoteTokens, customTokens);
-    writeTokenCache(chainId, merged);
-    populateTokenSelects(merged, currentBase, currentQuote);
-    elements.tokenState.textContent = `已载入 ${merged.length} 个 Token；常用资产优先显示。`;
-  } catch (error) {
-    if (requestId !== state.activeTokenRequest) return;
-    elements.tokenState.classList.add("error");
-    elements.tokenState.textContent = `动态列表不可用，正在使用 ${fallback.length} 个内置或缓存 Token。`;
-    addLog(`Token 列表加载失败：${friendlyError(error)}`, "warning");
-  } finally {
-    if (requestId === state.activeTokenRequest) {
-      elements.baseToken.disabled = false;
-      elements.quoteToken.disabled = false;
-      persistSettings();
-    }
-  }
-}
-
-function extractTokens(payload, chainId) {
-  const candidate = payload?.tokens?.[String(chainId)] ?? payload?.[String(chainId)] ?? payload?.tokens;
-  if (!Array.isArray(candidate)) return [];
-
-  return candidate
-    .filter((item) => item && ADDRESS_PATTERN.test(item.address || ""))
-    .map((item) => ({
-      address: item.address,
-      symbol: String(item.symbol || "TOKEN").slice(0, 24),
-      name: String(item.name || item.symbol || "Unknown token").slice(0, 80),
-      decimals: Number(item.decimals),
-      priceUSD: item.priceUSD ?? null,
-    }))
-    .filter((item) => Number.isInteger(item.decimals) && item.decimals >= 0 && item.decimals <= 36);
+  populateTokenSelects(chain.tokens, customTokens, preferredBase, preferredQuote);
+  elements.tokenState.textContent = customTokens.length
+    ? `计价币保留 ${chain.tokens.length} 个主流资产；当前有 ${customTokens.length} 个自定义中间币。`
+    : `计价币仅显示 ${chain.tokens.length} 个主流资产；请手动添加中间币后再扫描。`;
+  persistSettings();
 }
 
 function mergeTokens(...lists) {
@@ -348,30 +324,39 @@ function mergeTokens(...lists) {
     }
   }
 
-  return [...map.values()].sort((a, b) => {
-    const aRank = featuredRank(a.symbol);
-    const bRank = featuredRank(b.symbol);
-    if (aRank !== bRank) return aRank - bRank;
-    return a.symbol.localeCompare(b.symbol, "en", { sensitivity: "base" });
-  });
+  return [...map.values()].sort((a, b) =>
+    a.symbol.localeCompare(b.symbol, "en", { sensitivity: "base" }),
+  );
 }
 
-function featuredRank(symbol) {
-  const index = FEATURED_SYMBOLS.indexOf(String(symbol).toUpperCase());
-  return index === -1 ? FEATURED_SYMBOLS.length : index;
-}
-
-function populateTokenSelects(tokens, preferredBase, preferredQuote) {
-  state.tokens = tokens;
-  fillTokenSelect(elements.baseToken, tokens, preferredBase, tokens[0]?.address);
-  fillTokenSelect(elements.quoteToken, tokens, preferredQuote, tokens[1]?.address || tokens[0]?.address);
+function populateTokenSelects(baseTokens, quoteTokens, preferredBase, preferredQuote) {
+  // Trusted base-token metadata wins when a custom token reuses a whitelist address.
+  state.tokens = mergeTokens(quoteTokens, baseTokens);
+  state.quoteTokens = quoteTokens;
+  fillTokenSelect(elements.baseToken, baseTokens, preferredBase, baseTokens[0]?.address);
+  fillTokenSelect(
+    elements.quoteToken,
+    quoteTokens,
+    preferredQuote,
+    quoteTokens[0]?.address,
+    "请先手动添加中间币",
+  );
+  elements.quoteToken.disabled = quoteTokens.length === 0;
   updateTokenDetails();
 }
 
-function fillTokenSelect(select, tokens, preferred, fallback) {
+function fillTokenSelect(select, tokens, preferred, fallback, emptyLabel = "暂无可用 Token") {
   const preferredKey = String(preferred || "").toLowerCase();
   const fallbackKey = String(fallback || "").toLowerCase();
   const fragment = document.createDocumentFragment();
+
+  if (!tokens.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = emptyLabel;
+    option.selected = true;
+    fragment.append(option);
+  }
 
   for (const item of tokens) {
     const option = document.createElement("option");
@@ -414,8 +399,10 @@ function addCustomIntermediateToken() {
     const customToken = token(address, symbol.slice(0, 24), name.slice(0, 80), decimals);
     writeCustomToken(chainId, customToken);
     const currentBase = elements.baseToken.value;
-    const merged = mergeTokens(state.tokens, [customToken]);
-    populateTokenSelects(merged, currentBase, customToken.address);
+    const chain = getChain(chainId);
+    const customTokens = readCustomTokens(chainId);
+    populateTokenSelects(chain.tokens, customTokens, currentBase, customToken.address);
+    elements.tokenState.textContent = `计价币保留 ${chain.tokens.length} 个主流资产；当前有 ${customTokens.length} 个自定义中间币。`;
     persistSettings();
 
     elements.customTokenMessage.textContent = `已添加 ${customToken.symbol}，并选为当前中间币。`;
@@ -852,7 +839,8 @@ function readAndValidateSettings() {
 
   if (!getChain(chainId)) throw new Error("请选择受支持的链");
   if (!ADDRESS_PATTERN.test(senderAddress)) throw new Error("报价地址必须是有效的 EVM 地址");
-  if (!baseToken || !quoteToken) throw new Error("请选择计价币和中间币");
+  if (!baseToken) throw new Error("请选择计价币");
+  if (!quoteToken) throw new Error("请先手动添加中间币");
   if (baseToken.address.toLowerCase() === quoteToken.address.toLowerCase()) {
     throw new Error("计价币和中间币不能相同");
   }
@@ -958,7 +946,7 @@ function setControlsBusy(busy) {
   elements.scanButton.textContent = busy ? "扫描中…" : "立即扫描";
   elements.chain.disabled = busy;
   elements.baseToken.disabled = busy;
-  elements.quoteToken.disabled = busy;
+  elements.quoteToken.disabled = busy || state.quoteTokens.length === 0;
 }
 
 function setMonitorStatus(type, text) {
@@ -1202,17 +1190,12 @@ function writeStorage(key, value) {
   }
 }
 
-function readTokenCache(chainId) {
-  const cache = readStoredObject(STORAGE_KEYS.tokenCache);
-  const entry = cache[String(chainId)];
-  if (!entry || !Array.isArray(entry.tokens)) return null;
-  return entry;
-}
-
-function writeTokenCache(chainId, tokens) {
-  const cache = readStoredObject(STORAGE_KEYS.tokenCache);
-  cache[String(chainId)] = { timestamp: Date.now(), tokens };
-  writeStorage(STORAGE_KEYS.tokenCache, cache);
+function removeStorage(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // The dashboard remains functional when storage is blocked.
+  }
 }
 
 function readCustomTokens(chainId) {

@@ -76,11 +76,11 @@
 
             <div class="field two-column">
               <div>
-                <label for="base-token-select">计价币</label>
+                <label for="base-token-select">计价币（主流资产）</label>
                 <select id="base-token-select" name="baseToken"></select>
               </div>
               <div>
-                <label for="quote-token-select">中间币</label>
+                <label for="quote-token-select">中间币（手动添加）</label>
                 <select id="quote-token-select" name="quoteToken"></select>
               </div>
             </div>
@@ -97,13 +97,13 @@
             </div>
 
             <div class="token-state" id="token-state" aria-live="polite">
-              正在载入 Token 列表…
+              计价币使用主流资产白名单；请手动添加中间币。
             </div>
 
-            <details class="custom-token-panel">
+            <details class="custom-token-panel" open>
               <summary>手动添加中间币</summary>
               <p class="field-help">
-                Token 不在列表时，可按当前链填写合约信息。请从区块浏览器核对地址和 decimals。
+                中间币只接受用户手动添加。请确认合约属于当前链，并从区块浏览器核对地址和 decimals。
               </p>
               <div class="field">
                 <label for="custom-token-address">中间币合约地址</label>

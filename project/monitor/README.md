@@ -23,7 +23,8 @@ python -m http.server 4173
 
 ## 功能
 
-- 动态读取 LI.FI 支持的 Token，并内置常用 Token 作为离线回退；
+- 支持 Base、Arbitrum、Optimism、Ethereum、Polygon 和 BSC；
+- 计价币只提供每条链的主流资产白名单，中间币由用户手动添加；
 - 配置链、计价币、中间币、测试金额、滑点、阈值与轮询间隔；
 - 正向与反向 Quote 串行验证；
 - 使用 `toAmountMin` 计算保守的闭环结果；
@@ -65,11 +66,14 @@ python -m http.server 4173
 
 页面只通过 HTTPS 请求 LI.FI Public API，配置和扫描历史保存在浏览器 `localStorage` 中。由于静态页面中的任何内容都对访问者可见，因此设计上不接受也不保存 LI.FI API Key。
 
-### Token 选择与自定义中间币
+### 主流计价币与自定义中间币
 
+- 计价币不再读取包含大量小币种的动态 Token 列表，只保留 USDC、USDT、DAI、ETH、BNB、WETH/WBNB、WBTC/BTCB 等当前链的主流资产。
+- BSC 使用 chainId `56`，内置 USDC、USDT、DAI、BNB、WBNB 和 BTCB。
+- 中间币列表只显示用户在当前链手动添加的 Token，不再混入 LI.FI 返回的近千个资产。
 - 计价币和中间币的选择项同时显示 Ticker、名称和完整合约地址；选择框下方也会固定展示当前合约地址，避免仅凭同名 Ticker 误选资产。
 - LI.FI 会在选定的两个 Token 之间自动寻找路由，用户无需人工指定 DEX 或逐跳路径。
-- 如果目标中间币不在 LI.FI Token 列表中，可以展开“手动添加中间币”，填写当前链上的合约地址、Ticker、Decimals 和可选名称。
+- 要扫描某个中间币时，展开“手动添加中间币”，填写当前链上的合约地址、Ticker、Decimals 和可选名称。
 - 自定义中间币按链保存在当前浏览器的 `localStorage` 中，不会提交到仓库或上传到本项目的服务器。
 - 合约地址和 Decimals 填错会导致金额解析错误或 Quote 失败；添加前必须通过对应链的区块浏览器核对。手动添加只代表允许尝试报价，不保证 LI.FI 存在可用流动性或路由。
 
@@ -104,7 +108,7 @@ Quote 是短时有效的可执行报价，不是 WebSocket 行情。多链、多
 
 ### Token 列表体积
 
-单链可能包含近千个 Token。页面采用动态读取、常用资产优先排序、本地缓存和内置回退，以兼顾完整性与接口失败时的可用性。
+单链可能包含近千个 Token，其中存在同名、低流动性和非主流资产。新版不再把完整列表放进选择框：计价币使用代码内白名单，中间币由用户明确添加。这降低了误选风险，也避免页面初始化时额外请求 Token 列表。
 
 ### Gas 与费用归一化
 
@@ -123,7 +127,8 @@ Quote 很快会失效。页面持续显示报价年龄，超过 60 秒后标记�
 - JavaScript 静态语法检查通过；
 - HTML 必需元素及重复 ID 检查通过；
 - 本地 HTTP 服务可以正常返回页面和脚本；
-- LI.FI Token 接口在 Base 返回 976 个 Token；
+- BSC 主流资产地址和 decimals 已通过 LI.FI Token API 核对；
+- BSC 上 USDT → WBNB → USDT 双向 Quote 成功，正反向均返回 Bitget 路由；
 - Base 上 USDC → WETH → USDC 双向 Quote 成功；
 - 正反向 Quote 均返回 Provider、`toAmountMin`、Gas、费用和计价币价格；
 - LI.FI 响应包含允许 GitHub Pages 浏览器调用的跨域头。
