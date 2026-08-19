@@ -3,7 +3,7 @@ const STORAGE_KEYS = {
   settings: "lifi-monitor.settings.v1",
   history: "lifi-monitor.history.v1",
   quoteCalls: "lifi-monitor.quote-calls.v1",
-  customTokens: "lifi-monitor.custom-tokens.v1",
+  customTokens: "lifi-monitor.custom-tokens.v2",
 };
 
 const REQUEST_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -18,6 +18,7 @@ const CHAINS = [
   {
     id: 8453,
     name: "Base",
+    rpcUrl: "https://base-rpc.publicnode.com",
     tokens: [
       token("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "USDC", "USD Coin", 6),
       token("0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", "USDT", "Tether USD", 6),
@@ -30,6 +31,7 @@ const CHAINS = [
   {
     id: 42161,
     name: "Arbitrum",
+    rpcUrl: "https://arbitrum-one-rpc.publicnode.com",
     tokens: [
       token("0xaf88d065e77c8cC2239327C5EDb3A432268e5831", "USDC", "USD Coin", 6),
       token("0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", "USDT", "Tether USD", 6),
@@ -42,6 +44,7 @@ const CHAINS = [
   {
     id: 10,
     name: "Optimism",
+    rpcUrl: "https://optimism-rpc.publicnode.com",
     tokens: [
       token("0x0b2c639c533813f4aa9d7837caf62653d097ff85", "USDC", "USD Coin", 6),
       token("0x94b008aA00579c1307B0EF2c499aD98a8ce58e58", "USDT", "Tether USD", 6),
@@ -54,6 +57,7 @@ const CHAINS = [
   {
     id: 1,
     name: "Ethereum",
+    rpcUrl: "https://ethereum-rpc.publicnode.com",
     tokens: [
       token("0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "USDC", "USD Coin", 6),
       token("0xdAC17F958D2ee523a2206206994597C13D831ec7", "USDT", "Tether USD", 6),
@@ -66,6 +70,7 @@ const CHAINS = [
   {
     id: 137,
     name: "Polygon",
+    rpcUrl: "https://polygon-bor-rpc.publicnode.com",
     tokens: [
       token("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", "USDC", "USD Coin", 6),
       token("0xc2132D05D31c914a87C6611C10748AEb04B58e8F", "USDT", "Tether USD", 6),
@@ -78,6 +83,7 @@ const CHAINS = [
   {
     id: 56,
     name: "BSC",
+    rpcUrl: "https://bsc-rpc.publicnode.com",
     tokens: [
       token("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", "USDC", "USD Coin", 18),
       token("0x55d398326f99059fF775485246999027B3197955", "USDT", "Tether USD", 18),
@@ -112,9 +118,6 @@ const elements = {
   quoteTokenAddress: byId("quote-token-address"),
   tokenState: byId("token-state"),
   customTokenAddress: byId("custom-token-address"),
-  customTokenSymbol: byId("custom-token-symbol"),
-  customTokenDecimals: byId("custom-token-decimals"),
-  customTokenName: byId("custom-token-name"),
   addCustomTokenButton: byId("add-custom-token-button"),
   customTokenMessage: byId("custom-token-message"),
   amount: byId("amount-input"),
@@ -379,47 +382,150 @@ function updateTokenDetails() {
   elements.quoteTokenAddress.textContent = quoteToken?.address || "—";
 }
 
-function addCustomIntermediateToken() {
+async function addCustomIntermediateToken() {
   elements.customTokenMessage.classList.remove("error");
+  elements.addCustomTokenButton.disabled = true;
+  elements.addCustomTokenButton.textContent = "正在读取链上信息…";
+  elements.customTokenAddress.disabled = true;
+  elements.chain.disabled = true;
 
   try {
+    if (state.scanning) throw new Error("当前正在扫描，请等待本轮 Quote 完成后再添加 Token");
     const chainId = Number(elements.chain.value);
     const address = elements.customTokenAddress.value.trim();
-    const symbol = elements.customTokenSymbol.value.trim();
-    const decimals = Number(elements.customTokenDecimals.value);
-    const name = elements.customTokenName.value.trim() || `${symbol}（自定义）`;
+    const chain = getChain(chainId);
 
-    if (!getChain(chainId)) throw new Error("请先选择支持的链");
+    if (!chain) throw new Error("请先选择支持的链");
     if (!ADDRESS_PATTERN.test(address)) throw new Error("请输入有效的 EVM Token 合约地址");
-    if (!symbol || /[\u0000-\u001f]/.test(symbol)) throw new Error("请填写 Token Ticker / Symbol");
-    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
-      throw new Error("Decimals 必须是 0 到 36 之间的整数");
+    if (address.toLowerCase() === NATIVE_TOKEN_ADDRESS) {
+      throw new Error("零地址代表原生资产，不是 ERC-20 合约地址");
     }
 
-    const customToken = token(address, symbol.slice(0, 24), name.slice(0, 80), decimals);
+    elements.customTokenMessage.textContent = `正在从 ${chain.name} 链读取 Token 合约信息…`;
+    const metadata = await readErc20Metadata(chain, address);
+    if (Number(elements.chain.value) !== chainId) throw new Error("链已切换，请重新添加 Token");
+    const customToken = token(address, metadata.symbol, metadata.name, metadata.decimals);
     writeCustomToken(chainId, customToken);
     const currentBase = elements.baseToken.value;
-    const chain = getChain(chainId);
     const customTokens = readCustomTokens(chainId);
     populateTokenSelects(chain.tokens, customTokens, currentBase, customToken.address);
     elements.tokenState.textContent = `计价币保留 ${chain.tokens.length} 个主流资产；当前有 ${customTokens.length} 个自定义中间币。`;
     persistSettings();
 
-    elements.customTokenMessage.textContent = `已添加 ${customToken.symbol}，并选为当前中间币。`;
+    elements.customTokenMessage.textContent = `已从链上读取并添加 ${customToken.symbol}（decimals ${customToken.decimals}）。`;
     addLog(`已添加自定义中间币 ${customToken.symbol}（${customToken.address}）。`, "success");
   } catch (error) {
     elements.customTokenMessage.classList.add("error");
     elements.customTokenMessage.textContent = friendlyError(error);
+  } finally {
+    elements.addCustomTokenButton.disabled = state.scanning;
+    elements.addCustomTokenButton.textContent = "读取链上信息并添加";
+    elements.customTokenAddress.disabled = state.scanning;
+    elements.chain.disabled = state.scanning;
   }
 }
 
 function clearCustomTokenForm() {
   elements.customTokenAddress.value = "";
-  elements.customTokenSymbol.value = "";
-  elements.customTokenDecimals.value = "18";
-  elements.customTokenName.value = "";
   elements.customTokenMessage.textContent = "";
   elements.customTokenMessage.classList.remove("error");
+}
+
+async function readErc20Metadata(chain, address) {
+  const code = await rpcRequest(chain, "eth_getCode", [address, "latest"]);
+  if (!code || code === "0x" || /^0x0*$/.test(code)) {
+    throw new Error(`${chain.name} 上该地址没有合约代码`);
+  }
+
+  const [symbolResult, decimalsResult, nameResult] = await Promise.allSettled([
+    callErc20View(chain, address, "0x95d89b41"),
+    callErc20View(chain, address, "0x313ce567"),
+    callErc20View(chain, address, "0x06fdde03"),
+  ]);
+
+  if (symbolResult.status !== "fulfilled") throw new Error("合约未返回标准 ERC-20 symbol() 数据");
+  if (decimalsResult.status !== "fulfilled") throw new Error("合约未返回标准 ERC-20 decimals() 数据");
+
+  const symbol = cleanTokenText(decodeAbiString(symbolResult.value), "", 24);
+  const decimals = decodeAbiUint(decimalsResult.value);
+  let name = symbol;
+  if (nameResult.status === "fulfilled") {
+    try {
+      name = cleanTokenText(decodeAbiString(nameResult.value), symbol, 80);
+    } catch {
+      name = symbol;
+    }
+  }
+
+  if (!symbol) throw new Error("无法从合约读取有效的 Token Symbol");
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error(`链上 decimals 为 ${decimals}，超出页面支持的 0–36 范围`);
+  }
+
+  return { symbol, name, decimals };
+}
+
+async function callErc20View(chain, address, data) {
+  return rpcRequest(chain, "eth_call", [{ to: address, data }, "latest"]);
+}
+
+async function rpcRequest(chain, method, params) {
+  const response = await fetchWithTimeout(chain.rpcUrl, 15_000, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+  });
+
+  if (!response.ok) throw new Error(`${chain.name} RPC 请求失败（HTTP ${response.status}）`);
+  const payload = await response.json();
+  if (payload.error) throw new Error(payload.error.message || `${chain.name} RPC 调用失败`);
+  if (typeof payload.result !== "string") throw new Error(`${chain.name} RPC 返回了无法识别的数据`);
+  return payload.result;
+}
+
+function decodeAbiUint(value) {
+  if (!/^0x[0-9a-fA-F]+$/.test(value || "")) throw new Error("无法解析链上整数数据");
+  return Number(BigInt(value));
+}
+
+function decodeAbiString(value) {
+  const hex = String(value || "").replace(/^0x/, "");
+  if (!hex || hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) {
+    throw new Error("无法解析链上文本数据");
+  }
+
+  if (hex.length === 64) return decodeHexText(hex.replace(/(?:00)+$/, ""));
+  if (hex.length < 128) throw new Error("链上文本数据长度无效");
+
+  const offset = Number(BigInt(`0x${hex.slice(0, 64)}`)) * 2;
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset + 64 > hex.length) {
+    throw new Error("链上文本数据偏移无效");
+  }
+
+  const byteLength = Number(BigInt(`0x${hex.slice(offset, offset + 64)}`));
+  if (!Number.isSafeInteger(byteLength) || byteLength < 0 || byteLength > 512) {
+    throw new Error("链上文本数据长度异常");
+  }
+
+  const start = offset + 64;
+  const end = start + byteLength * 2;
+  if (end > hex.length) throw new Error("链上文本数据不完整");
+  return decodeHexText(hex.slice(start, end));
+}
+
+function decodeHexText(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(bytes).replace(/\0/g, "").trim();
+}
+
+function cleanTokenText(value, fallback, maxLength) {
+  const cleaned = String(value || "")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .trim();
+  return (cleaned || fallback).slice(0, maxLength);
 }
 
 async function startMonitoring() {
@@ -947,6 +1053,8 @@ function setControlsBusy(busy) {
   elements.chain.disabled = busy;
   elements.baseToken.disabled = busy;
   elements.quoteToken.disabled = busy || state.quoteTokens.length === 0;
+  elements.customTokenAddress.disabled = busy;
+  elements.addCustomTokenButton.disabled = busy;
 }
 
 function setMonitorStatus(type, text) {
@@ -1018,13 +1126,14 @@ function renderLogs() {
   elements.activityList.replaceChildren(fragment);
 }
 
-async function fetchWithTimeout(url, timeoutMs) {
+async function fetchWithTimeout(url, timeoutMs, options = {}) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json" },
+      method: options.method || "GET",
+      ...options,
+      headers: { Accept: "application/json", ...(options.headers || {}) },
       signal: controller.signal,
     });
   } catch (error) {
@@ -1052,7 +1161,7 @@ async function apiError(response, prefix) {
 
 function friendlyError(error) {
   if (error instanceof TypeError && /fetch/i.test(error.message)) {
-    return "无法连接 LI.FI API，请检查网络、浏览器扩展或跨域策略";
+    return "无法连接外部接口，请检查网络、浏览器扩展或跨域策略";
   }
   return error?.message || String(error);
 }

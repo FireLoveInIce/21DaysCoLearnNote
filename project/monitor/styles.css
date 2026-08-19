@@ -382,12 +382,6 @@ select:disabled {
   margin-bottom: 0;
 }
 
-.custom-token-meta {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 92px;
-  gap: 10px;
-}
-
 .full-width {
   width: 100%;
   margin-top: 12px;
@@ -846,10 +840,6 @@ footer {
   .token-contract-grid,
   .form-actions {
     grid-template-columns: 1fr;
-  }
-
-  .custom-token-meta {
-    grid-template-columns: minmax(0, 1fr) 82px;
   }
 
   .route-flow {

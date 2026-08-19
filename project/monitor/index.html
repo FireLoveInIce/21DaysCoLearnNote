@@ -103,7 +103,7 @@
             <details class="custom-token-panel" open>
               <summary>手动添加中间币</summary>
               <p class="field-help">
-                中间币只接受用户手动添加。请确认合约属于当前链，并从区块浏览器核对地址和 decimals。
+                只需填写当前链的合约地址。页面会通过链上 RPC 读取名称、Ticker 和 Decimals。
               </p>
               <div class="field">
                 <label for="custom-token-address">中间币合约地址</label>
@@ -116,29 +116,8 @@
                   placeholder="0x…"
                 />
               </div>
-              <div class="field custom-token-meta">
-                <div>
-                  <label for="custom-token-symbol">Ticker / Symbol</label>
-                  <input id="custom-token-symbol" type="text" maxlength="24" placeholder="TOKEN" />
-                </div>
-                <div>
-                  <label for="custom-token-decimals">Decimals</label>
-                  <input
-                    id="custom-token-decimals"
-                    type="number"
-                    min="0"
-                    max="36"
-                    step="1"
-                    value="18"
-                  />
-                </div>
-              </div>
-              <div class="field">
-                <label for="custom-token-name">名称（可选）</label>
-                <input id="custom-token-name" type="text" maxlength="80" placeholder="Custom Token" />
-              </div>
               <button id="add-custom-token-button" class="button secondary full-width" type="button">
-                添加并选为中间币
+                读取链上信息并添加
               </button>
               <p id="custom-token-message" class="field-help" aria-live="polite"></p>
             </details>
